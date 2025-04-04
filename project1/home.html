@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Python Online IDE</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- CodeMirror CDN for Code Editor and Add-ons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.4/codemirror.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.4/theme/dracula.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.4/addon/hint/show-hint.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.4/addon/lint/lint.min.css">
+    
+    <!-- Pyodide CDN for Python execution -->
+    <script src="https://cdn.jsdelivr.net/npm/pyodide@0.22.0/pyodide.js"></script>
+</head>
+<body class="bg-gray-100">
+
+    <div class="container mx-auto p-4">
+        <!-- Header Section -->
+        <h1 class="text-3xl text-center font-bold mb-4">Python Online IDE</h1>
+        
+        <!-- Code Editor and Output -->
+        <div class="flex flex-col md:flex-row space-y-4 md:space-y-0 md:space-x-4">
+            <!-- Code Editor Section -->
+            <div class="flex-1">
+                <!-- CodeMirror Text Area for Python Code -->
+                <textarea id="python-code" class="w-full h-64 p-4 bg-gray-800 text-white rounded-lg border-2 border-gray-700" placeholder="Write your Python code here..."></textarea>
+                <div class="flex space-x-2 mt-4">
+                    <button id="run-code" class="flex-1 bg-blue-500 text-white p-2 rounded-lg hover:bg-blue-600">Run Code</button>
+                    <button id="analyze-code" class="flex-1 bg-green-500 text-white p-2 rounded-lg hover:bg-green-600">Analyze Variables</button>
+                </div>
+            </div>
+            
+            <!-- Output Section -->
+            <div class="flex-1">
+                <div class="flex justify-between items-center">
+                    <h2 class="text-xl font-semibold">Output:</h2>
+                    <select id="output-type" class="px-2 py-1 rounded border border-gray-300">
+                        <option value="execution">Execution Results</option>
+                        <option value="variables">Variables</option>
+                    </select>
+                </div>
+                <pre id="output" class="bg-gray-200 p-4 h-64 rounded-lg overflow-y-auto text-black mt-2"></pre>
+            </div>
+        </div>
+    </div>
+
+    <!-- JavaScript to Handle Code Execution with Pyodide and CodeMirror Editor -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.4/codemirror.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.4/mode/python/python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.4/addon/edit/matchbrackets.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.4/addon/edit/closebrackets.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.4/addon/hint/show-hint.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.4/addon/hint/python-hint.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.4/addon/display/placeholder.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.4/addon/comment/comment.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.4/addon/selection/active-line.min.js"></script>
+
+    <script>
+        let pyodide;
+        let pyodideReady = false;
+        const outputElement = document.getElementById('output');
+        const outputTypeSelect = document.getElementById('output-type');
+        
+        // Python keywords and built-in functions for suggestions
+        const pythonKeywords = [
+            "and", "as", "assert", "break", "class", "continue", "def", "del", "elif", 
+            "else", "except", "False", "finally", "for", "from", "global", "if", "import", 
+            "in", "is", "lambda", "None", "nonlocal", "not", "or", "pass", "raise", 
+            "return", "True", "try", "while", "with", "yield",
+            // Built-in functions
+            "abs", "all", "any", "ascii", "bin", "bool", "bytearray", "bytes", "callable",
+            "chr", "classmethod", "compile", "complex", "delattr", "dict", "dir", "divmod",
+            "enumerate", "eval", "exec", "filter", "float", "format", "frozenset", "getattr",
+            "globals", "hasattr", "hash", "help", "hex", "id", "input", "int", "isinstance",
+            "issubclass", "iter", "len", "list", "locals", "map", "max", "memoryview", "min",
+            "next", "object", "oct", "open", "ord", "pow", "print", "property", "range",
+            "repr", "reversed", "round", "set", "setattr", "slice", "sorted", "staticmethod",
+            "str", "sum", "super", "tuple", "type", "vars", "zip"
+        ];
+        
+        // Common libraries for suggestions
+        const commonLibraries = {
+            "math": ["sin", "cos", "tan", "sqrt", "floor", "ceil", "pi", "e", "degrees", "radians"],
+            "random": ["random", "randint", "choice", "shuffle", "sample"],
+            "datetime": ["datetime", "date", "time", "timedelta"],
+            "os": ["path", "listdir", "mkdir", "remove", "rename", "system", "environ"],
+            "sys": ["argv", "exit", "path", "stdin", "stdout", "stderr"],
+            "json": ["load", "loads", "dump", "dumps"],
+            "numpy": ["array", "zeros", "ones", "arange", "linspace", "random", "mean", "median", "std"]
+        };
+        
+        // User defined variables and functions
+        let userDefinedSymbols = [];
+
+        // Load Pyodide and initialize it
+        async function initPyodide() {
+            try {
+                outputElement.textContent = "Loading Python environment...";
+                pyodide = await loadPyodide();
+                
+                // Set up stdout redirection
+                pyodide.runPython(`
+                    import sys
+                    import json
+                    from pyodide.console import PyodideConsole, repr_shorten
+                    from pyodide.ffi import to_js
+                    
+                    class MyOutput:
+                        def __init__(self):
+                            self.outputs = []
+                            
+                        def write(self, text):
+                            self.outputs.append(text)
+                            
+                        def flush(self):
+                            pass
+                            
+                        def getvalue(self):
+                            return ''.join(self.outputs)
+                            
+                    sys.stdout = MyOutput()
+                    sys.stderr = MyOutput()
+                    
+                    def get_variables():
+                        """Get all variables in the global namespace with their types and values"""
+                        variables = {}
+                        for name, value in globals().items():
+                            # Skip internal names, modules, and functions/classes
+                            if (not name.startswith('_') and 
+                                not name in ['sys', 'json', 'MyOutput', 'get_variables', 'to_js']):
+                                try:
+                                    type_name = type(value).__name__
+                                    # Try to get a string representation of the value
+                                    try:
+                                        if isinstance(value, (int, float, bool, str, list, dict, tuple, set)):
+                                            str_value = repr(value)
+                                        else:
+                                            str_value = str(type(value))
+                                    except:
+                                        str_value = f"<{type_name} object>"
+                                    
+                                    variables[name] = {
+                                        'type': type_name,
+                                        'value': str_value
+                                    }
+                                except:
+                                    pass
+                        return variables
+                `);
+                
+                pyodideReady = true;
+                outputElement.textContent = "Python environment ready. Write your code and click 'Run Code'.";
+            } catch (error) {
+                outputElement.textContent = "Error loading Pyodide: " + error.message;
+                console.error("Error loading Pyodide:", error);
+            }
+        }
+
+        // Wait for Pyodide to be initialized before enabling the editor
+        initPyodide();
+        
+        // Extract variable names from code
+        function extractVariables(code) {
+            const assignmentRegex = /([a-zA-Z_][a-zA-Z0-9_]*)\s*=/g;
+            const functionRegex = /def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(/g;
+            const classRegex = /class\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*[:\(]/g;
+            
+            const variables = new Set();
+            let match;
+            
+            // Find variable assignments
+            while ((match = assignmentRegex.exec(code)) !== null) {
+                variables.add(match[1]);
+            }
+            
+            // Find function definitions
+            while ((match = functionRegex.exec(code)) !== null) {
+                variables.add(match[1]);
+            }
+            
+            // Find class definitions
+            while ((match = classRegex.exec(code)) !== null) {
+                variables.add(match[1]);
+            }
+            
+            return Array.from(variables);
+        }
+        
+        // Custom hint function for CodeMirror
+        function getHints(editor, options) {
+            const cursor = editor.getCursor();
+            const line = editor.getLine(cursor.line);
+            const token = editor.getTokenAt(cursor);
+            
+            // Get the current word being typed
+            const start = token.string === "." ? cursor.ch : token.start;
+            const end = cursor.ch;
+            const currentWord = line.slice(start, end);
+            
+            // Determine if we're in an import statement
+            const isImport = /^\s*(?:import|from)\s+/.test(line);
+            
+            // Determine if we're trying to access an attribute (after a dot)
+            const isDotCompletion = token.string === ".";
+            const prevToken = isDotCompletion ? editor.getTokenAt({line: cursor.line, ch: token.start}) : null;
+            
+            let completions = [];
+            
+            if (isImport) {
+                // Suggest library names
+                completions = Object.keys(commonLibraries);
+            } else if (isDotCompletion && prevToken) {
+                // Module attribute completion
+                const moduleName = prevToken.string;
+                if (commonLibraries[moduleName]) {
+                    completions = commonLibraries[moduleName];
+                }
+            } else {
+                // Regular code completion
+                completions = [
+                    ...pythonKeywords,
+                    ...userDefinedSymbols
+                ];
+            }
+            
+            // Filter completions based on what's been typed
+            if (currentWord) {
+                completions = completions.filter(w => w.startsWith(currentWord));
+            }
+            
+            return {
+                list: completions,
+                from: {line: cursor.line, ch: start},
+                to: {line: cursor.line, ch: end}
+            };
+        }
+
+        // Setup CodeMirror Editor with additional features
+        const editor = CodeMirror.fromTextArea(document.getElementById('python-code'), {
+            mode: 'python',
+            theme: 'dracula',
+            lineNumbers: true,
+            indentUnit: 4,
+            smartIndent: true,
+            tabSize: 4,
+            indentWithTabs: false,
+            matchBrackets: true,
+            autoCloseBrackets: true,
+            styleActiveLine: true,
+            extraKeys: {
+                "Ctrl-Space": "autocomplete",
+                "Tab": function(cm) {
+                    if (cm.somethingSelected()) {
+                        cm.indentSelection("add");
+                    } else {
+                        // Insert spaces instead of tab
+                        cm.replaceSelection(" ".repeat(cm.getOption("indentUnit")));
+                    }
+                },
+                "Ctrl-/": "toggleComment"
+            },
+            hintOptions: {
+                hint: getHints,
+                completeSingle: false
+            }
+        });
+        
+        // Enable auto-suggestions on typing
+        editor.on("inputRead", function(editor, change) {
+            // Update user-defined variables list
+            userDefinedSymbols = extractVariables(editor.getValue());
+            
+            // Trigger auto-completion for certain conditions
+            if (change.text[0] === "." || 
+                (change.text[0].match(/[a-zA-Z0-9_]/) && editor.getTokenAt(editor.getCursor()).type !== "comment")) {
+                editor.showHint({ completeSingle: false });
+            }
+        });
+
+        // Default code example
+        editor.setValue('# Try this example:\nimport math\n\n# Define a function to calculate circle area\ndef calculate_area(radius):\n    return math.pi * radius ** 2\n\n# Create some variables\nradius = 5\narea = calculate_area(radius)\n\nprint(f"The area of a circle with radius {radius} is {area:.2f}")');
+        
+        // Update user-defined variables list on initial load
+        userDefinedSymbols = extractVariables(editor.getValue());
+
+        // Run Python code when clicking the Run button
+        document.getElementById('run-code').addEventListener('click', async function() {
+            if (!pyodideReady) {
+                outputElement.textContent = "Pyodide is still loading. Please wait...";
+                return;
+            }
+
+            const code = editor.getValue();  // Get Python code from the editor
+            outputElement.textContent = "Running code...";
+            outputTypeSelect.value = "execution";
+            
+            try {
+                // Clear previous stdout
+                pyodide.runPython(`
+                    sys.stdout.outputs = []
+                    sys.stderr.outputs = []
+                `);
+                
+                // Execute the Python code
+                let result = pyodide.runPython(code);
+                
+                // Update user-defined variables
+                userDefinedSymbols = extractVariables(code);
+                
+                // Get any printed output
+                const stdout = pyodide.runPython("sys.stdout.getvalue()");
+                const stderr = pyodide.runPython("sys.stderr.getvalue()");
+                
+                // Combine the output
+                let output = "";
+                if (stdout) {
+                    output += stdout;
+                }
+                if (stderr) {
+                    output += "\nErrors:\n" + stderr;
+                }
+                
+                // If there's a return value from the last expression, display it
+                if (result !== undefined && result !== null && result.toString() !== "undefined") {
+                    if (output) output += "\n";
+                    output += "=> " + result.toString();
+                }
+                
+                // Display the output
+                outputElement.textContent = output || "Code executed successfully with no output.";
+                
+            } catch (error) {
+                outputElement.textContent = "Error executing code: " + error.message;
+                console.error("Python execution error:", error);
+            }
+        });
+        
+        // Analyze variables when clicking the Analyze button
+        document.getElementById('analyze-code').addEventListener('click', async function() {
+            if (!pyodideReady) {
+                outputElement.textContent = "Pyodide is still loading. Please wait...";
+                return;
+            }
+            
+            try {
+                // Get all variables from the Python environment
+                const variables = pyodide.runPython(`to_js(get_variables())`);
+                outputTypeSelect.value = "variables";
+                
+                if (Object.keys(variables).length === 0) {
+                    outputElement.textContent = "No variables defined yet. Run your code first.";
+                    return;
+                }
+                
+                // Format the variables info
+                let output = "VARIABLES IN CURRENT SCOPE:\n\n";
+                for (const [name, info] of Object.entries(variables)) {
+                    output += `${name} (${info.type}): ${info.value}\n`;
+                }
+                
+                outputElement.textContent = output;
+                
+            } catch (error) {
+                outputElement.textContent = "Error analyzing variables: " + error.message;
+                console.error("Variable analysis error:", error);
+            }
+        });
+        
+        // Handle output type selection
+        outputTypeSelect.addEventListener('change', function() {
+            if (this.value === "variables") {
+                document.getElementById('analyze-code').click();
+            } else {
+                // Rerun the code to show execution results
+                document.getElementById('run-code').click();
+            }
+        });
+    </script>
+
+</body>
+</html>
